@@ -62,11 +62,8 @@ def evaluate_current_window():
     if len(buffer) > 0:
         evaluation_function(str(time.time_ns()), buffer)
         cfg = load_config()
-        if cfg["window"] == "length":
-            for _ in range(cfg["stride"]):
-                buffer.pop(0)
-        else:
-            buffer.clear()
+        for _ in range(cfg["stride"]):
+            buffer.pop(0)
 
 
 def get_data_files():
@@ -118,34 +115,6 @@ def length_window(my_dict):
                 k += cfg["stride"]
 
 
-def time_window(my_dict):
-    global max_window_length
-    for i in my_dict.keys():
-        data[i] = {}
-        for j in my_dict[i].keys():
-            data[i][j] = []
-            timestamp = 0
-
-            timestamp = find_start_timestamp(i, j, my_dict, timestamp)
-
-            time_span = cfg["window_size"]
-            window = []
-            for k in range(len(my_dict[i][j])):
-                try:
-                    if int(my_dict[i][j][k][0]) - timestamp > time_span:
-                        data[i][j].append(window)
-                        max_window_length = max(max_window_length, len(window))
-                        window = []
-                        timestamp = int(my_dict[i][j][k][0])
-                except:
-                    continue
-
-                my_dict[i][j][k].pop(0)
-                window.extend(my_dict[i][j][k])
-            if len(window) > 0:
-                data[i][j].append(window)
-
-
 def find_start_timestamp(i, j, my_dict, timestamp):
     for k in range(len(my_dict[i][j])):
         try:
@@ -166,10 +135,8 @@ def pad_windows_to_max():
 
 
 def window_data(my_dict):
-    if cfg["window"] == "length":
-        length_window(my_dict)
-    elif cfg["window"] == "time":
-        time_window(my_dict)
+    length_window(my_dict)
+
     for i in data.keys():
         for j in data[i].keys():
             for k in data[i][j]:
@@ -273,8 +240,6 @@ def create_input():
             for j in data[label][i]:
                 X.append(j)
                 y.append(label)
-            print("X shape:{}".format(len(X)))
-            print("Done {}".format(i))
     return X, y
 
 

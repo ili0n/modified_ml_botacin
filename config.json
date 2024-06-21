@@ -1,11 +1,6 @@
 {
-  "window": "length",
   "window_size": 100,
   "stride": 100,
   "evaluation_mode": false,
-  "max_window_length": 100,
-  "categories": [
-    "goodware",
-    "malware"
-  ]
+  "max_window_length": 100
 }
