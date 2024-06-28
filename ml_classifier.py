@@ -5,15 +5,13 @@ import resource
 import sys
 import time
 import traceback
+from collections import Counter
 
 import joblib
 import argparse
-import pandas as pd
-import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, f1_score, classification_report
-from sklearn.preprocessing import OrdinalEncoder
+from sklearn.metrics import accuracy_score, classification_report
 from sklearn.feature_extraction.text import HashingVectorizer
 
 cfg = {}
@@ -30,9 +28,11 @@ ml_model_path = os.path.join(current_dir, "models/random_forest_model.pkl")
 encoder_path = os.path.join(current_dir, "models/ordinal_encoder.pkl")
 max_window_length = -1
 
+core_count = 4
+
 
 def limit_cpu():
-    os.sched_setaffinity(0, set(range(0, 2)))
+    os.sched_setaffinity(0, set(range(0, core_count)))
 
 
 def limit_memory(maxsize):
@@ -129,7 +129,7 @@ def pad_windows_to_max():
     for i in data.values():
         for j in i.values():
             for k in j:
-                print(max_window_length - len(k))
+                # print(max_window_length - len(k))
                 for _ in range(max_window_length - len(k)):
                     k.append("")
 
@@ -141,7 +141,8 @@ def window_data(my_dict):
         for j in data[i].keys():
             for k in data[i][j]:
                 if max_window_length == len(k):
-                    print(max_window_length)
+                    # print(max_window_length)
+                    pass
     pad_windows_to_max()
 
 
@@ -169,35 +170,38 @@ def load_from_files():
     for i in paths.keys():
         my_dict[i] = {}
         for j in paths[i]:
-
-            file_path = log_path + "/" + i + "/" + j
-            if not is_file_empty(file_path):
-                my_dict[i][j] = []
-                lines = open(file_path).readlines()
-                for k in lines:
-                    try:
-                        if "|" in k:
-                            split_values = k.strip().split("|")
-                            # print(split_values)
-
-                            result_dict = {
-                                split_values[i]: split_values[i + 1]
-                                for i in range(0, len(split_values), 2)
-                            }
-                            remove_headers(result_dict)
-                            my_dict[i][j].append(list(result_dict.values()))
-
-                        else:
-                            k = k.strip()
-                            if k.startswith("[INFO]") and k.endswith(":before"):
-                                func_name = k.split(" ")[-1].split(":")[0]
-                                my_dict[i][j].append([0, func_name])
-
-                    except Exception as e:
-                        print("Error parsing line")
+            get_single_file_data(i, j, my_dict)
 
     return my_dict
 
+
+def get_single_file_data(i, j, my_dict):
+    file_path = log_path + "/" + i + "/" + j
+    if not is_file_empty(file_path):
+        my_dict[i][j] = []
+        lines = open(file_path).readlines()
+        for k in lines:
+            try:
+                if "|" in k:
+                    split_values = k.strip().split("|")
+                    # print(split_values)
+
+                    result_dict = {
+                        split_values[i]: split_values[i + 1]
+                        for i in range(0, len(split_values), 2)
+                    }
+                    remove_headers(result_dict)
+                    my_dict[i][j].append(list(result_dict.values()))
+
+                else:
+                    k = k.strip()
+                    if k.startswith("[INFO]") and k.endswith(":before"):
+                        func_name = k.split(" ")[-1].split(":")[0]
+                        my_dict[i][j].append([0, func_name])
+
+            except Exception as e:
+                # print("Error parsing line")
+                pass
 
 def parse_from_memory(window_id, data_array):
     my_dict = {}
@@ -232,11 +236,11 @@ def order_data(encoder):
 def create_input():
     X = []
     y = []
-    size_in_bytes = sys.getsizeof(data)
-    print(f"Size in bytes: {size_in_bytes}")
+    # size_in_bytes = sys.getsizeof(data)
+    # print(f"Size in bytes: {size_in_bytes}")
     for label in data.keys():
         for i in data[label].keys():
-            print(len(data[label][i]))
+            # print(len(data[label][i]))
             for j in data[label][i]:
                 X.append(j)
                 y.append(label)
@@ -271,7 +275,7 @@ def evaluation_function(window_id, buf):
 
 
 def train():
-    rf_classifier = RandomForestClassifier(n_estimators=100, n_jobs=4, random_state=42, verbose=1)
+    rf_classifier = RandomForestClassifier(n_estimators=100, n_jobs=-1, random_state=42, verbose=1)
     encoder = HashingVectorizer()
     X, y = order_data(encoder)
 
@@ -294,13 +298,50 @@ def train():
     joblib.dump(rf_classifier, ml_model_path)
     joblib.dump(encoder, encoder_path)
 
+    return rf_classifier, encoder
+
+
+def test(rf_classifier, encoder):
+    global paths
+    paths = {}
+    malware_traces_path = log_path + "/test"
+    # Get a list of all filenames in the folder
+    malware_traces = os.listdir(malware_traces_path)
+    paths["test"] = malware_traces
+
+    my_dict = {}
+    global data
+
+    for i in paths.keys():
+        for j in paths[i]:
+            my_dict[i] = {}
+            data = {}
+            get_single_file_data(i, j, my_dict)
+            clean_data(my_dict)
+
+            y = predict(rf_classifier, encoder)
+            counter = Counter(y)
+            label = str(counter.most_common(1)[0][0])
+            print(f"File {j} ({label}) Predicted: {counter[label]} / {len(y)}")
+            logging.info(f"File {j} ({label}) Predicted: {counter[label]} / {len(y)}")
+
+    my_dict = load_from_files()
+    clean_data(my_dict)
+
+
+def predict(rf_classifier, encoder):
+    X, y = order_data(encoder)
+    y = rf_classifier.predict(X)
+    return y
+
 
 def training_main():
     load_config()
     get_data_files()
     my_dict = load_from_files()
     clean_data(my_dict)
-    train()
+    rf_classifier, encoder = train()
+    test(rf_classifier, encoder)
 
 
 def test_file(path):
@@ -336,7 +377,8 @@ if __name__ == "__main__":
         load_config(True)
 
         # Define the --test argument with a description
-        parser.add_argument('--test', help='Specify a test file')
+        parser.add_argument('--test', action='store_true', help='Specify a test file')
+
 
         # Parse the command line arguments
         args = parser.parse_args()
@@ -344,10 +386,10 @@ if __name__ == "__main__":
         # Check if the --test argument was provided
         if args.test:
             # Access the value of the --test argument using args.test
-            filename = args.test
-            print(f'Test file: {filename}')
-            logging.info(f'Test file: {filename}')
-            test_file(filename)
+
+            rf_classifier = joblib.load(ml_model_path)
+            encoder = joblib.load(encoder_path)
+            test(rf_classifier, encoder)
         else:
             print('Training started')
             logging.info('Training started')
