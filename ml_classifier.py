@@ -9,10 +9,13 @@ from collections import Counter
 
 import joblib
 import argparse
+
+import pandas as pd
+from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report
-from sklearn.feature_extraction.text import HashingVectorizer
+
 
 cfg = {}
 paths = {}
@@ -29,6 +32,7 @@ encoder_path = os.path.join(current_dir, "models/ordinal_encoder.pkl")
 max_window_length = -1
 
 core_count = 4
+max_gb_ram = 20
 
 
 def limit_cpu():
@@ -110,8 +114,6 @@ def length_window(my_dict):
                         window.extend(my_dict[i][j][l])
                 data[i][j].append(window)
                 max_window_length = max(max_window_length, len(window))
-                if cfg["evaluation_mode"]:
-                    break
                 k += cfg["stride"]
 
 
@@ -128,10 +130,9 @@ def find_start_timestamp(i, j, my_dict, timestamp):
 def pad_windows_to_max():
     for i in data.values():
         for j in i.values():
-            for k in j:
-                # print(max_window_length - len(k))
-                for _ in range(max_window_length - len(k)):
-                    k.append("")
+            for k in range(len(j)):
+                for _ in range(max_window_length - len(j[k])):
+                    j[k].append("")
 
 
 def window_data(my_dict):
@@ -203,6 +204,7 @@ def get_single_file_data(i, j, my_dict):
                 # print("Error parsing line")
                 pass
 
+
 def parse_from_memory(window_id, data_array):
     my_dict = {}
     my_dict["live_software"] = {}
@@ -231,6 +233,30 @@ def order_data(encoder):
     X_encoded = encoder.fit_transform(X_encoded)
     # y_encoded = encoder.fit_transform(y)
     return X_encoded, y
+
+
+def order_data_test(encoder):
+    X, y = create_input()
+    X_encoded = [' '.join(sublist) for sublist in X]
+    X_encoded  = encoder.transform(X_encoded)
+    # X_encoded = transform_with_ignore_unseen(encoder, X_encoded)
+    return X_encoded, y
+
+
+def transform_with_ignore_unseen(vectorizer, X):
+    # Get the feature names that the vectorizer learned from the training data
+    learned_features = vectorizer.get_feature_names_out()
+
+    # Transform the test data into a DataFrame
+    X_df = pd.DataFrame(X, columns=vectorizer.get_feature_names_out())
+
+    # Drop the columns that the vectorizer didn't see during training
+    X_df = X_df.loc[:, X_df.columns.isin(learned_features)]
+
+    # Transform the DataFrame back into a numpy array
+    X_transformed = X_df.values
+
+    return X_transformed
 
 
 def create_input():
@@ -276,7 +302,7 @@ def evaluation_function(window_id, buf):
 
 def train():
     rf_classifier = RandomForestClassifier(n_estimators=100, n_jobs=-1, random_state=42, verbose=1)
-    encoder = HashingVectorizer()
+    encoder = CountVectorizer()
     X, y = order_data(encoder)
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
@@ -320,6 +346,8 @@ def test(rf_classifier, encoder):
             clean_data(my_dict)
 
             y = predict(rf_classifier, encoder)
+            if len(y) <= 0:
+                continue
             counter = Counter(y)
             label = str(counter.most_common(1)[0][0])
             print(f"File {j} ({label}) Predicted: {counter[label]} / {len(y)}")
@@ -330,7 +358,9 @@ def test(rf_classifier, encoder):
 
 
 def predict(rf_classifier, encoder):
-    X, y = order_data(encoder)
+    X, y = order_data_test(encoder)
+    if X.shape[0] <=0:
+        return []
     y = rf_classifier.predict(X)
     return y
 
@@ -372,13 +402,12 @@ if __name__ == "__main__":
 
         limit_cpu()
         GB = 1073741824
-        limit_memory(20 * GB)
+        limit_memory(max_gb_ram * GB)
 
         load_config(True)
 
         # Define the --test argument with a description
         parser.add_argument('--test', action='store_true', help='Specify a test file')
-
 
         # Parse the command line arguments
         args = parser.parse_args()
@@ -400,3 +429,4 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"An error occurred during training: {e}")
         logging.error(f"An error occurred during training: {e}")
+        traceback.print_exc()
